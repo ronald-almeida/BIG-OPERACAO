@@ -1,7 +1,9 @@
-import { neon } from '@neondatabase/serverless';
+import { neon, neonConfig } from '@neondatabase/serverless';
 import { readFile } from 'node:fs/promises';
 import { after } from 'node:test';
 import { postgresAdapter } from '../src/postgres.mjs';
+// Cloudflare/DNS mocks in publication tests must not intercept Neon SQL transport.
+neonConfig.fetchFunction = globalThis.fetch;
 
 export async function database() {
   if (process.env.VERCEL_ENV !== 'preview') throw new Error('Testes Neon exigem ambiente preview.');

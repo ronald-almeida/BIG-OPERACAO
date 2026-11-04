@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { database } from './d1.mjs';
+import { database as sqliteDatabase } from './d1.mjs';
+const database = process.env.TEST_DATABASE === 'neon' ? (await import('./neon-fixture.mjs')).database : process.env.TEST_DATABASE === 'postgres' ? (await import('./postgres-fixture.mjs')).database : sqliteDatabase;
 import { mutate,loadState } from '../src/store.mjs';
 import { publishCommand,farmCommand } from '../src/farm.mjs';
 import worker from '../src/worker.mjs';
 test('real publication adapter: snapshot, HTTPS check, root ownership and safe removal',async()=>{
- const DB=database(),env={DB,APP_ORIGIN:'https://panel.example',CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),CLOUDFLARE_API_TOKEN:'test-token',FARM_WORKER_SERVICE:'big-operacao'};
+ const DB=await database(),env={DB,APP_ORIGIN:'https://panel.example',CLOUDFLARE_ACCOUNT_ID:'a'.repeat(32),CLOUDFLARE_API_TOKEN:'test-token',FARM_WORKER_SERVICE:'big-operacao'};
  const a={id:'EMP-A',role:'employee',name:'A'},b={id:'EMP-B',role:'employee',name:'B'},admin={id:'ADMIN',role:'admin',name:'Admin'};
  await mutate(DB,'seed',crypto.randomUUID(),'seed',s=>{s.admin={id:'ADMIN'};s.people=[{id:a.id},{id:b.id}];s.farm.domains=[{id:'D',owner:a.id,hostname:'company.example',active:true,site_limit:null}];s.farm.sites=['S1','S2'].map((id,i)=>({id,owner:i?b.id:a.id,domain_id:'D',publish_mode:'root',subdomain:null,data:{cnpj:'53749174000118',razao:id,atividade:'Teste'},theme:'id01',head:'',version:1,status:'draft',snapshot:null}));return {};});
  const originalFetch=globalThis.fetch;let bound=false,deletes=0;

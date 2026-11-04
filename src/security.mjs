@@ -54,7 +54,7 @@ export function originCheck(request, env) {
 export async function throttle(db, key, limit, interval, now=Date.now()) {
   const expires = (Math.floor(now/interval)+1)*interval;
   const fullKey = digest(key) + ':' + expires;
-  const row = await db.prepare('INSERT INTO rate_limits(key,hits,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET hits=hits+1 RETURNING hits').bind(fullKey,expires).first();
+  const row = await db.prepare('INSERT INTO rate_limits(key,hits,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET hits=rate_limits.hits+1 RETURNING hits').bind(fullKey,expires).first();
   assert(row.hits <= limit, 'Muitas tentativas. Aguarde alguns minutos.', 429);
 }
 export const cookie = (value, age=43200, request) => new URL(request?.url||'https://localhost').protocol==='http:'

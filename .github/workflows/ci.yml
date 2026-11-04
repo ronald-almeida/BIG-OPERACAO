@@ -12,5 +12,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
+      - run: npm ci
       - run: npm run check
       - run: npm test
+      - run: node --test tests/core.test.mjs tests/farm-publish.test.mjs
+        env:
+          TEST_DATABASE: postgres

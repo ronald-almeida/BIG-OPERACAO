@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import worker from '../src/worker.mjs';
-import { database } from './d1.mjs';
+import { database as sqliteDatabase } from './d1.mjs';
+const database = process.env.TEST_DATABASE === 'neon' ? (await import('./neon-fixture.mjs')).database : process.env.TEST_DATABASE === 'postgres' ? (await import('./postgres-fixture.mjs')).database : sqliteDatabase;
 import { loadState,mutate,emptyState } from '../src/store.mjs';
 import { command,timeCommand,settle } from '../src/domain.mjs';
 import { payroll,monthBounds } from '../src/payroll.mjs';
@@ -9,7 +10,7 @@ import { farmCommand } from '../src/farm.mjs';
 import { seal,unseal } from '../src/security.mjs';
 const origin='https://operacao.example';
 async function fixture(){
- const env={DB:database(),APP_ORIGIN:origin,VAULT_KEY:'1'.repeat(64),BOOTSTRAP_TOKEN:'setup-test-'.repeat(4),ASSETS:{fetch:async()=>new Response('app')}};
+ const env={DB:await database(),APP_ORIGIN:origin,VAULT_KEY:'1'.repeat(64),BOOTSTRAP_TOKEN:'setup-test-'.repeat(4),ASSETS:{fetch:async()=>new Response('app')}};
  const call=async(path,data,auth={},extra={})=>{const headers={...extra};if(data!==undefined){headers['Content-Type']='application/json';headers.Origin=extra.Origin||origin;headers['X-CSRF-Token']=auth.csrf||'';headers['X-Request-Id']=extra['X-Request-Id']||crypto.randomUUID();}if(auth.cookie)headers.Cookie=auth.cookie;const response=await worker.fetch(new Request((extra.url||origin)+'/api/'+path,{method:data===undefined?'GET':'POST',headers,body:data===undefined?undefined:JSON.stringify(data)}),env);const body=await response.json();return {status:response.status,body,headers:response.headers};};
  assert.equal((await call('setup',{token:env.BOOTSTRAP_TOKEN,name:'Administrador QA',username:'admin',password:'Admin-test-pass-123'})).status,200);
  const login=async(username,password)=>{const r=await call('login',{username,password});assert.equal(r.status,200,JSON.stringify(r.body));const auth={cookie:r.headers.get('set-cookie').split(';')[0]};const s=await call('state',undefined,auth);auth.csrf=s.body.csrf;return auth;};
@@ -86,6 +87,6 @@ test('AES-GCM vault rejects tampering and credential swaps',async()=>{
  const env={VAULT_KEY:'a'.repeat(64)},encrypted=await seal('secret-value','PRF-A',env);assert(!encrypted.includes('secret-value'));assert.equal(await unseal(encrypted,'PRF-A',env),'secret-value');await assert.rejects(()=>unseal(encrypted,'PRF-B',env));
 });
 test('failed multi-row transaction rolls back and retry keeps both concurrent writes',async()=>{
- const DB=database();await assert.rejects(()=>DB.batch([DB.prepare("INSERT INTO records VALUES('settings','main','{}')"),DB.prepare('INSERT INTO nonexistent VALUES(1)')]));assert.equal((await loadState(DB)).state.settings.mode,'variable');
+ const DB=await database();await assert.rejects(()=>DB.batch([DB.prepare("INSERT INTO records VALUES('settings','main','{}')"),DB.prepare('INSERT INTO nonexistent VALUES(1)')]));assert.equal((await loadState(DB)).state.settings.mode,'variable');
  await Promise.all(['one','two'].map(label=>mutate(DB,label,crypto.randomUUID(),label,s=>{s.tasks.push({id:label,text:label});return {};})));assert.equal((await loadState(DB)).state.tasks.length,2);
 });

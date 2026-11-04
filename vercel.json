@@ -1,0 +1,12 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "node scripts/build-vercel.mjs",
+  "outputDirectory": "vercel-static",
+  "regions": ["gru1"],
+  "functions": {
+    "api/index.mjs": { "maxDuration": 60, "includeFiles": "public/**" }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "crons": [{ "path": "/api/cron", "schedule": "0 6 * * *" }]
+}

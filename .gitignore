@@ -7,3 +7,6 @@ node_modules/
 backups/
 wrangler.generated.json
 dist/
+.vercel/
+vercel-static/*
+!vercel-static/.gitkeep

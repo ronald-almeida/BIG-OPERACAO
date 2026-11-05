@@ -44,13 +44,42 @@ test('employee ownership, vault encryption, sales and idempotent atomic mutation
  const created=await f.run('bm',null,bm,a.auth);assert.equal(created.status,200,JSON.stringify(created.body));const bid=created.body.result.id;
  const receiptId=crypto.randomUUID();const sell={bm:bid,profile:pid,client:'Cliente',amount:500,date:'2026-11-01',paid:'no'};
  const [s1,s2]=await Promise.all([f.run('sale',null,sell,f.admin,{'X-Request-Id':receiptId}),f.run('sale',null,sell,f.admin,{'X-Request-Id':receiptId})]);
- assert.equal(s1.status,200);assert.equal(s2.status,200);assert.equal(s1.body.result.id,s2.body.result.id);
+ assert.equal(s1.status,200,JSON.stringify(s1.body));assert.equal(s2.status,200,JSON.stringify(s2.body));assert.equal(s1.body.result.id,s2.body.result.id);
  assert.equal((await f.run('sale',null,sell)).status,409);
  assert.equal((await f.run('sale',null,{...sell,amount:700},f.admin,{'X-Request-Id':receiptId})).status,409);
  const adminState=(await f.call('state',undefined,f.admin)).body.state;assert.equal(adminState.sales.length,1);assert.equal(adminState.bms[0].stock,'Vendida');
  const employeeState=(await f.call('state',undefined,b.auth)).body.state;assert.equal(employeeState.profiles.length,0);assert.equal(employeeState.sales.length,0);assert.equal(employeeState.people.length,1);
  assert.equal((await f.run('person',a.id,{name:'Alice',username:'alice',accessPassword:'',accessEnabled:'no',month:'2026-11',fixed:2000,hours:160,overtimeRate:20})).status,200);
  assert.equal((await f.call('state',undefined,a.auth)).status,401);
+});
+test('duplicate sale returns its receipt when the original commits before the state read',async()=>{
+ const db=await database(),actor={id:'ADMIN',role:'admin',name:'Administrador QA'};
+ await mutate(db,actor.id,crypto.randomUUID(),'seed',state=>{
+  state.admin={id:actor.id,name:actor.name,username:'admin'};
+  state.bms.push({id:'BM-RACE',status:'Ativa',stock:'Disponível',profiles:['PRF-RACE']});
+  state.costs.push({id:'CST-RACE',target:'BM-RACE',amount:30});
+  return {};
+ });
+ const requestId=crypto.randomUUID(),fingerprint='sale-race';
+ const data={bm:'BM-RACE',profile:'PRF-RACE',client:'Cliente',amount:500,date:'2026-11-01',paid:'no'};
+ let applied=0,committed,interleaved=false;
+ const sell=state=>{applied++;return command(state,actor,'sale',null,data,{});};
+ const delayed={...db,async batch(statements){
+  // The first request finishes while the duplicate is about to read current state.
+  if(!interleaved&&statements.some(s=>s.sql.includes('SELECT revision FROM workspace'))){
+   interleaved=true;
+   committed=await mutate(db,actor.id,requestId,fingerprint,sell);
+  }
+  return db.batch(statements);
+ }};
+ const repeated=await mutate(delayed,actor.id,requestId,fingerprint,sell);
+ assert.equal(interleaved,true);assert.deepEqual(repeated,committed);assert.equal(applied,1);
+ const {state}=await loadState(db);
+ assert.equal(state.sales.length,1);assert.equal(state.sales[0].cost,30);
+ assert.equal(state.bms[0].stock,'Vendida');assert.equal(state.events.filter(e=>e.type==='Venda').length,1);
+ assert.equal(Number((await db.prepare('SELECT COUNT(*) AS count FROM requests WHERE id=?').bind(actor.id+':'+requestId).first()).count),1);
+ await assert.rejects(()=>mutate(db,actor.id,requestId,'different-payload',sell),error=>error.status===409);
+ await assert.rejects(()=>mutate(db,actor.id,crypto.randomUUID(),fingerprint,sell),error=>error.status===409);
 });
 test('170 hours: 160 normal, 10 extra, monthly edges and presence timeout',()=>{
  const s=emptyState(),actor={id:'EMP-A',role:'employee',name:'A'};s.people=[{id:actor.id,payPlans:{'2026-11':{fixed:2000,hours:160,overtimeRate:20}}}];

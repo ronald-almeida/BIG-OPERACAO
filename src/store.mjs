@@ -11,21 +11,24 @@ export function flatten(state){
   if(state.admin)add('admin','ADMIN',state.admin);
   return rows;
 }
-export async function loadState(db){
-  // A single transactional batch returns a consistent revision and data snapshot.
-  const [meta,records]=await db.batch([db.prepare('SELECT revision FROM workspace WHERE id=1'),db.prepare('SELECT collection,id,data FROM records')]);
+export async function loadState(db,requestKey){
+  // Include the receipt in the same snapshot: a duplicate must never see a sale
+  // committed after a separate receipt lookup and treat it as a new operation.
+  const statements=[db.prepare('SELECT revision FROM workspace WHERE id=1'),db.prepare('SELECT collection,id,data FROM records')];
+  if(requestKey!==undefined)statements.push(db.prepare('SELECT actor,fingerprint,result FROM requests WHERE id=?').bind(requestKey));
+  const [meta,records,receipts]=await db.batch(statements);
   const state=emptyState();
   for(const row of records.results){const d=JSON.parse(row.data);if(arrays.includes(row.collection))state[row.collection].push(d);else if(row.collection.startsWith('farm_'))state.farm[row.collection.slice(5)].push(d);else if(row.collection==='sessions')state.sessions[row.id]=d;else if(row.collection==='admin')state.admin=d;else if(row.collection==='settings')state.settings=d;}
   state.events.sort((a,b)=>b.at-a.at);state.journal.sort((a,b)=>a.start-b.start);state.farm.history.sort((a,b)=>b.at-a.at);
-  return {state,revision:meta.results[0].revision};
+  return {state,revision:meta.results[0].revision,receipt:receipts?.results[0]??null};
 }
 export async function mutate(db, actor, requestId, fingerprint, apply){
   assert(/^[a-zA-Z0-9-]{16,80}$/.test(requestId||''),'Identificador da requisição obrigatório.');
   const key=actor+':'+requestId;
   for(let attempt=0;attempt<5;attempt++){
-    const receipt=await db.prepare('SELECT actor,fingerprint,result FROM requests WHERE id=?').bind(key).first();
+    const {state,revision,receipt}=await loadState(db,key);
     if(receipt){assert(receipt.fingerprint===fingerprint,'Identificador reutilizado com outra operação.',409);return JSON.parse(receipt.result);}
-    const {state,revision}=await loadState(db),before=flatten(state);
+    const before=flatten(state);
     const result=await apply(state);
     const after=flatten(state),op=crypto.randomUUID();
     const statements=[db.prepare('UPDATE workspace SET revision=revision+1,mutation_id=? WHERE id=1 AND revision=?').bind(op,revision)];

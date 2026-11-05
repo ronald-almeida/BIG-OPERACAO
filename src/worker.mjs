@@ -3,6 +3,7 @@ import { loadState,mutate } from './store.mjs';
 import { command,event,actorCheck,ownerCheck,settle,pause,dateAt } from './domain.mjs';
 import { payroll,monthBounds } from './payroll.mjs';
 import { farmCommand,publishCommand,connected } from './farm.mjs';
+import { externalFarm,attachFarm,externalFarmCommand } from './farm-bridge.mjs';
 import { renderFarm } from './farm/farm-render.mjs';
 import { lookupFarmCnpj } from './farm/farm-cnpj.mjs';
 
@@ -12,7 +13,7 @@ function userView(state,actor,env,now){
   settle(state,now);const copy=structuredClone(state);delete copy.admin;
   copy.people=copy.people.map(({passwordHash,credentialVersion,planHistory,...p})=>p);
   copy.profiles=copy.profiles.map(({vault,...p})=>({...p,hasPassword:!!vault}));
-  copy.integrations={cloudflare:connected(env),vault:/^[a-f0-9]{64}$/i.test(env.VAULT_KEY||'')};
+  copy.integrations={cloudflare:externalFarm(env)?state.farm.available===true:connected(env),vault:/^[a-f0-9]{64}$/i.test(env.VAULT_KEY||'')};
   copy.serverPayroll={};
   for(const p of state.people)if(actor.role==='admin'||p.id===actor.id){copy.serverPayroll[p.id]={};for(const month of Object.keys(p.payPlans||{})){const q=payroll(state,p.id,month,now);if(actor.role!=='admin'){q.hours=q.normalHours;q.amount=q.normalAmount;q.extra=0;q.extraAmount=0;q.overtimeRate=null;q.overtimePending=false;q.plan={...q.plan,overtimeRate:null};}copy.serverPayroll[p.id][month]=q;}}
   if(actor.role==='admin')return copy;
@@ -31,12 +32,12 @@ function userView(state,actor,env,now){
       if(credited)copy.journal.push({id:j.id+':'+month,employee:actor.id,start,end,duration:credited,reason:j.reason});
     }
   }
-  copy.farm.domains=copy.farm.domains.map(d=>({...d,site_count:state.farm.sites.filter(s=>s.domain_id===d.id).length,otherSites:state.farm.sites.some(s=>s.domain_id===d.id&&s.owner!==actor.id),rootOccupied:state.farm.sites.some(s=>s.domain_id===d.id&&s.publish_mode==='root'&&s.snapshot)}));
+  if(!externalFarm(env))copy.farm.domains=copy.farm.domains.map(d=>({...d,site_count:state.farm.sites.filter(s=>s.domain_id===d.id).length,otherSites:state.farm.sites.some(s=>s.domain_id===d.id&&s.owner!==actor.id),rootOccupied:state.farm.sites.some(s=>s.domain_id===d.id&&s.publish_mode==='root'&&s.snapshot)}));
   copy.farm.sites=copy.farm.sites.filter(s=>s.owner===actor.id);
   copy.farm.history=copy.farm.history.filter(h=>h.owner===actor.id);
   return copy;
 }
-async function stateResponse(env,actor,extra={}){const {state}=await loadState(env.DB);actorCheck(state,actor);const now=Date.now();return json({state:userView(state,actor,env,now),user:{id:actor.id,role:actor.role,name:actor.name},csrf:actor.session.csrf,now,...extra});}
+async function stateResponse(env,actor,extra={}){const {state}=await loadState(env.DB);actorCheck(state,actor);if(externalFarm(env)){try{await attachFarm(env,actor,state);}catch{state.farm={domains:[],sites:[],history:[],available:false,source:'cloudflare-d1',writable:false};}}const now=Date.now();return json({state:userView(state,actor,env,now),user:{id:actor.id,role:actor.role,name:actor.name},csrf:actor.session.csrf,now,...extra});}
 async function api(request,env){
   const url=new URL(request.url),path=url.pathname,method=request.method,now=Date.now();
   assert(env.DB,'Banco de dados não configurado.',503);
@@ -81,11 +82,13 @@ async function api(request,env){
   if(path==='/api/command'&&method==='POST'){
     await throttle(env.DB,'command:'+actor.id,120,60000);const d=await readBody(request);
     assert(typeof d.cmd==='string'&&d.cmd.length<80&&(!d.id||typeof d.id==='string'),'Comando inválido.');
+    if(externalFarm(env)&&d.cmd.startsWith('farm-')){const result=await externalFarmCommand(env,actor,state,d,request.headers.get('x-request-id'));return stateResponse(env,actor,{result});}
     const result=await mutate(env.DB,actor.id,request.headers.get('x-request-id'),digest(JSON.stringify(d)),async current=>d.cmd.startsWith('farm-')?farmCommand(current,actor,d.cmd,d.id,d.data||{},env,now):command(current,actor,d.cmd,d.id,d.data||{},env,now));
     return stateResponse(env,actor,{result});
   }
   if(path==='/api/farm-publish'&&method==='POST'){
     await throttle(env.DB,'publish:'+actor.id,20,60000);const d=await readBody(request);assert(['farm-publish','farm-unpublish','farm-verify'].includes(d.cmd),'Comando inválido.');
+    if(externalFarm(env)){const result=await externalFarmCommand(env,actor,state,d,request.headers.get('x-request-id'));return stateResponse(env,actor,{result});}
     const result=await publishCommand(env,actor,d.cmd,d.id,d.replace===true);return stateResponse(env,actor,{result});
   }
   throw new HttpError(404,'Rota não encontrada.');

@@ -1,0 +1,24 @@
+Farm BM existente — BIG OPERAÇÃO
+
+FARM_BRIDGE_URL=https://aprovabmyksh.com/api/operacao-farm
+FARM_BRIDGE_SECRET é Secret no servidor, com valores distintos em Production e Preview.
+Preview usa a chave que o Worker aceita somente para leitura, além de FARM_BRIDGE_READ_ONLY=true.
+Não colocar a chave no JavaScript público nem fornecer token Cloudflare ao navegador.
+
+A Farm é mantida no D1 big-cloack: sites, domínios, snapshots e histórico.
+O Neon continua responsável pelos usuários e demais módulos operacionais.
+O estado Farm é consultado e projetado na resposta; não é salvo como cópia editável no Neon.
+Entregas Farm são projetadas dos recibos D1, preservando o registro mesmo se a resposta se perder.
+Os sites antigos pertencem ao administrador até atribuição explícita pelo editor.
+
+O Worker big-cloack-api valida a credencial e as permissões por operação.
+Sua configuração FARM_BRIDGE_MODE controla read/write.
+FARM_LEGACY_MODE=disabled desabilita a antiga administração Farm após a transição.
+A entrega pública dos sites e big-cloack-redirect continuam no ambiente existente.
+
+Recuperação: conservar os recibos farm_operations e repetir a mesma requisição após perda de resposta.
+Um recibo pending de execução interrompida exige conferir a operação antes de liberar nova tentativa.
+Não restaurar o D1 inteiro sobre cliques novos do redirecionador para desfazer uma alteração da Farm.
+Reverter código/configuração da integração preserva os snapshots e os demais módulos.
+
+O antigo deploy:farm (Worker separado lendo Neon) não faz parte desta instalação.

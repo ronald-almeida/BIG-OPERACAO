@@ -40,4 +40,59 @@ body{margin:0;background:light-dark(#f4f6f9,#10151d);color-scheme:light dark}
 #big-operacao .bo-farm-tabs .bo-svg{width:17px;height:17px}
 @media(max-width:560px){#big-operacao .bo-nav .bo-icon{width:19px;height:19px}#big-operacao .bo-nav .bo-svg{width:18px;height:18px}#big-operacao .bo-stat-icon{width:26px;height:26px;border-radius:7px}}
 
-.bo-demo{background:#153e32;color:#fff}.bo-demo button{color:inherit}.bo-test{display:none}.bo-cell-link{overflow-wrap:anywhere}td small{overflow-wrap:anywhere}.bo-row{flex-wrap:wrap}
+.bo-test{display:none}.bo-cell-link{overflow-wrap:anywhere}td small{overflow-wrap:anywhere}.bo-row{flex-wrap:wrap}
+
+/* The shell stays mounted; only the current workspace view changes. */
+#big-operacao{min-height:100dvh;border-radius:0;overflow:clip}
+#big-operacao .bo-shell{display:block;min-height:100dvh;padding-left:232px}
+#big-operacao .bo-side{position:fixed;inset:0 auto 0 0;width:232px;height:100dvh;padding:26px 16px 16px;gap:26px;z-index:40;overflow:hidden;border-right:1px solid var(--bo-line);border-bottom:0}
+#big-operacao .bo-brand{flex-shrink:0;position:relative;padding:0 4px}
+#big-operacao .bo-nav-scroll{overflow-y:auto;min-height:0;flex:1;scrollbar-width:thin}
+#big-operacao .bo-side nav{display:grid;gap:5px}
+#big-operacao .bo-nav{min-height:42px;font-size:12px;padding:10px 12px;text-align:left}
+#big-operacao .bo-nav-label{display:block}
+#big-operacao .bo-side-bottom{display:flex;flex-shrink:0;margin-top:auto;gap:10px;padding:16px 0 0}
+#big-operacao .bo-account-name{min-width:0;flex:1;font-size:12px}
+#big-operacao .bo-account-name strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#big-operacao .bo-side-bottom .bo-action{padding:8px 6px;font-size:11px}
+#big-operacao .bo-side-bottom .bo-action .bo-svg{display:none}
+#big-operacao .bo-main{min-height:100dvh;display:flex;flex-direction:column}
+#big-operacao .bo-top{min-height:72px;padding:16px 30px;flex-shrink:0}
+#big-operacao .bo-top-title{display:flex;align-items:center;gap:12px;min-width:0}
+#big-operacao .bo-breadcrumb{font-weight:600;color:var(--bo-text);white-space:normal}
+#big-operacao .bo-body{flex:1;width:100%;max-width:1680px;margin:0 auto;padding:28px 30px}
+#big-operacao .bo-footer{padding:0 30px 20px;color:var(--bo-sub)}
+#big-operacao .bo-menu-toggle,#big-operacao .bo-menu-close{display:none;border:1px solid var(--bo-line);background:var(--bo-paper);color:var(--bo-text);border-radius:9px;align-items:center;justify-content:center;flex-shrink:0;width:42px;height:42px}
+#big-operacao .bo-backdrop{position:fixed;inset:0;background:#071c2a88;backdrop-filter:blur(2px);border:0;z-index:39}
+#big-operacao [hidden]{display:none!important}
+#big-operacao .bo-sync-error{padding:10px 30px;color:var(--bo-amber);background:var(--bo-asoft);font-size:12px}
+#big-operacao[aria-busy="true"]::after{content:'Processando…';position:fixed;right:20px;bottom:20px;padding:10px 16px;border-radius:30px;background:var(--bo-brand);color:var(--bo-onbrand);box-shadow:0 6px 24px #0002;z-index:60;font-size:12px}
+#big-operacao button:focus-visible,#big-operacao a:focus-visible{outline:2px solid var(--bo-green);outline-offset:3px}
+@media(max-width:1100px){#big-operacao .bo-stats{grid-template-columns:repeat(2,minmax(0,1fr))}#big-operacao .bo-grid{grid-template-columns:1fr}}
+@media(max-width:900px){
+ #big-operacao .bo-shell{padding-left:0}
+ #big-operacao .bo-side{width:min(300px,88vw);transform:translateX(-100%);visibility:hidden;transition:transform .2s ease;gap:22px;padding:22px 16px max(18px,env(safe-area-inset-bottom))}
+ #big-operacao.bo-menu-open .bo-side{transform:translateX(0);visibility:visible;box-shadow:12px 0 40px #0002}
+ #big-operacao .bo-menu-toggle,#big-operacao .bo-menu-close{display:inline-flex}
+ #big-operacao .bo-menu-close{margin-left:auto;font-size:25px;border:0}
+ #big-operacao .bo-top{position:sticky;top:0;z-index:20;min-height:68px;padding:12px 18px}
+ #big-operacao .bo-body{padding:22px 18px}
+ #big-operacao .bo-footer{padding:0 18px 20px}
+ #big-operacao .bo-nav{min-height:46px;font-size:13px}
+ #big-operacao .bo-nav .bo-icon{width:23px;height:23px}
+ #big-operacao .bo-nav .bo-svg{width:20px;height:20px}
+}
+@media(max-width:560px){
+ #big-operacao .bo-top{font-size:12px;padding:10px 14px}
+ #big-operacao .bo-top-date{font-size:10px}
+ #big-operacao .bo-body{padding:22px 14px}
+ #big-operacao .bo-panel-head{padding:16px 14px}
+ #big-operacao .bo-pad{padding:16px 14px}
+ #big-operacao .bo-heading h1{font-size:23px}
+ #big-operacao .bo-heading>.bo-row{width:100%}
+ #big-operacao .bo-action{min-height:42px}
+ #big-operacao .bo-form-footer{flex-wrap:wrap}
+ #big-operacao .bo-detail-grid{grid-template-columns:1fr}
+ #big-operacao .bo-sync-error{padding:10px 14px}
+}
+@media(prefers-reduced-motion:reduce){#big-operacao .bo-side{transition:none}}

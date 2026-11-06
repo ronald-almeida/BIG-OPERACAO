@@ -31,6 +31,13 @@ test('bootstrap is one-time; auth, CSRF, session and origin boundaries',async()=
  assert.equal((await f.call('state',undefined,f.admin)).status,401);
  await f.login('admin','Another-admin-pass-123');
 });
+test('authenticated state reads one database snapshot and still checks session revocation',async()=>{
+ const f=await fixture();let reads=0;const batch=f.env.DB.batch.bind(f.env.DB);
+ f.env.DB.batch=async queries=>{reads++;return batch(queries);};
+ const current=await f.call('state?farm=0',undefined,f.admin);assert.equal(current.status,200);assert.equal(reads,1);
+ await f.env.DB.prepare('DELETE FROM auth_sessions').run();assert.equal((await f.call('state?farm=0',undefined,f.admin)).status,401);
+});
+
 test('employee ownership, vault encryption, sales and idempotent atomic mutations',async()=>{
  const f=await fixture(),a=await f.employee('alice'),b=await f.employee('bruno');
  const profile={name:'Perfil A',meta:'meta-a',login:'a',email:'',backup:'',status:'Ativo',proxy:'',created:'2026-11-01',note:'',demoPassword:'profile-secret-123',owner:b.id};

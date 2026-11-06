@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 function ui(){
- const root={addEventListener(){},querySelector(){return null}};
+ const root={addEventListener(){},querySelector(){return null},querySelectorAll(){return []}};
  const context={document:{getElementById:()=>root,addEventListener(){},hidden:false},setInterval(){},setTimeout(){},structuredClone,console};
  vm.createContext(context);
- const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace('\ninitialize();','\nglobalThis.ui={accept,farmSites,farmDetail,farmById,farmCanEdit,refresh,view:()=>state.farm,select:id=>farmUI.view=id,setPage:p=>page=p};');
+ const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8').replace('\ninitialize();','\nglobalThis.ui={accept,farmSites,farmDetail,farmById,farmCanEdit,refresh,view:()=>state.farm,events:()=>state.events,mutated:()=>changeEpoch++,select:id=>farmUI.view=id,setPage:p=>page=p};');
  vm.runInContext(source,context);return {app:context.ui,context};
 }
 const response=(farm,id='alice')=>({user:{id,role:'employee',name:id},csrf:'test',now:Date.now(),state:{people:[{id,name:id}],bms:[],events:[],sessions:{},farm}});
@@ -23,9 +23,26 @@ test('temporary outage preserves last good list, marks it stale and blocks write
  app.accept(response({notRequested:true,available:false,sites:[],domains:[],history:[]}));assert.equal(app.view().sites.length,2);
  app.accept(response({notRequested:true,available:false,sites:[],domains:[],history:[]},'other'));assert.equal(app.view().sites.length,0);
 });
-test('background refresh outside Farm skips the D1 integration and overlapping requests coalesce',async()=>{
- const {app,context}=ui();app.accept(response(farm()));let requests=[];
+test('background refresh outside Farm checks its revision and overlapping requests coalesce',async()=>{
+ const {app,context}=ui();app.accept(response({...farm(),revision:42}));let requests=[];
  context.fetch=async url=>{requests.push(url);return {ok:true,json:async()=>response({available:false,notRequested:true,sites:[],domains:[],history:[]})};};
- await Promise.all([app.refresh(),app.refresh()]);assert.deepEqual(requests,['/api/state?farm=0']);
+ await Promise.all([app.refresh(),app.refresh()]);assert.deepEqual(requests,['/api/state?farmRevision=42']);
  app.setPage('farm');await app.refresh(true);assert.equal(requests.at(-1),'/api/state');
+});
+
+test('omitted or unchanged Farm preserves delivery events, sites and recovers from stale state',()=>{
+ const {app}=ui(),initial=response({...farm(),revision:3});initial.state.events=[{id:'FARM-1',at:3},{id:'EVT-1',at:1}];app.accept(initial);
+ app.accept(response({notRequested:true,available:false}));assert.equal(app.events()[0].id,'FARM-1');
+ app.accept(response({available:false,error:'Falha temporária'}));assert.equal(app.view().stale,true);
+ app.accept(response({unchanged:true,available:true,writable:true,stale:false,revision:3,fetchedAt:Date.now(),sites:[],domains:[],history:[]}));
+ assert.equal(app.events()[0].id,'FARM-1');assert.equal(app.view().sites.length,2);assert.equal(app.view().stale,false);assert.equal(app.view().error,undefined);
+ app.accept(response(farm(),'other'));assert.equal(app.events().length,0);
+});
+
+test('a slow refresh cannot overwrite a newer mutation response',async()=>{
+ const {app,context}=ui();app.accept(response({...farm(),revision:1}));let resolve;
+ context.fetch=()=>new Promise(r=>resolve=r);
+ const pending=app.refresh();app.mutated();app.accept(response({...farm(),revision:2}));
+ resolve({ok:true,json:async()=>response({...farm(),revision:1})});await pending;
+ assert.equal(app.view().revision,2);
 });

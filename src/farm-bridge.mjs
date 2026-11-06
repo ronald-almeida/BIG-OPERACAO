@@ -14,8 +14,8 @@ async function call(env,actor,input){
   if(!response.ok)throw Object.assign(new HttpError(response.status,result.error||'Não foi possível concluir a operação da Farm.'),{code:result.code,retryAt:result.retryAt});
   return result;
 }
-export async function attachFarm(env,actor,state){
-  const result=await call(env,actor,{action:'state'});
+export async function attachFarm(env,actor,state,revision){
+  const result=await call(env,actor,{action:'state',revision});
   assert(result.farm?.source==='cloudflare-d1'&&Array.isArray(result.farm.sites),'Resposta inválida da Farm.',503);
   state.farm=result.farm;
   if(env.FARM_BRIDGE_READ_ONLY==='true')state.farm.writable=false;

@@ -36,7 +36,7 @@ function userView(state,actor,env,now){
   if(!externalFarm(env))copy.farm.domains=copy.farm.domains.map(d=>({...d,site_count:state.farm.sites.filter(s=>s.domain_id===d.id).length,otherSites:state.farm.sites.some(s=>s.domain_id===d.id&&s.owner!==actor.id),rootOccupied:state.farm.sites.some(s=>s.domain_id===d.id&&s.publish_mode==='root'&&s.snapshot)}));
   return copy;
 }
-async function stateResponse(env,actor,extra={},includeFarm=true){const {state}=await loadState(env.DB);actorCheck(state,actor);if(externalFarm(env)){state.farm={domains:[],sites:[],history:[],available:false,source:'cloudflare-d1',writable:false,notRequested:!includeFarm};if(includeFarm){try{await attachFarm(env,actor,state);}catch(error){console.warn('farm_state_unavailable',error.code||'FARM_UNAVAILABLE');Object.assign(state.farm,{error:error.message,errorCode:error.code||'FARM_UNAVAILABLE',retryAt:error.retryAt||Date.now()+30000});}}}const now=Date.now();return json({state:userView(state,actor,env,now),user:{id:actor.id,role:actor.role,name:actor.name},csrf:actor.session.csrf,now,...extra});}
+async function stateResponse(env,actor,extra={},includeFarm=true,snapshot=null,farmRevision){const {state}=snapshot||await loadState(env.DB);actorCheck(state,actor);if(externalFarm(env)){state.farm={domains:[],sites:[],history:[],available:false,source:'cloudflare-d1',writable:false,notRequested:!includeFarm};if(includeFarm){try{await attachFarm(env,actor,state,farmRevision);}catch(error){console.warn('farm_state_unavailable',error.code||'FARM_UNAVAILABLE');Object.assign(state.farm,{error:error.message,errorCode:error.code||'FARM_UNAVAILABLE',retryAt:error.retryAt||Date.now()+30000});}}}const now=Date.now();return json({state:userView(state,actor,env,now),user:{id:actor.id,role:actor.role,name:actor.name},csrf:actor.session.csrf,now,...extra});}
 async function api(request,env){
   const url=new URL(request.url),path=url.pathname,method=request.method,now=Date.now();
   assert(env.DB,'Banco de dados não configurado.',503);
@@ -62,7 +62,7 @@ async function api(request,env){
   }
   const actor=await identify(request,env.DB,state);assert(actor,'Entre na sua conta para continuar.',401);
   if(method!=='GET')assert(request.headers.get('x-csrf-token')===actor.session.csrf,'A sessão precisa ser atualizada.',403);
-  if(path==='/api/state'&&method==='GET')return stateResponse(env,actor,{},url.searchParams.get('farm')!=='0');
+  if(path==='/api/state'&&method==='GET')return stateResponse(env,actor,{},url.searchParams.get('farm')!=='0',{state},url.searchParams.get('farmRevision')??undefined);
   if(path==='/api/logout'&&method==='POST'){
     await mutate(env.DB,actor.id,crypto.randomUUID(),'logout',current=>{if(actor.role==='employee')pause(current,actor.id,'Saída do sistema',now);return {};});
     await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash=?').bind(actor.session.token_hash).run();return json({ok:true},200,{'Set-Cookie':cookie('',0,request)});

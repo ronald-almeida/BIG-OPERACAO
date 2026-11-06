@@ -1,4 +1,4 @@
-import { assert } from './security.mjs';
+import { assert, HttpError } from './security.mjs';
 import { actorCheck, ownerCheck } from './domain.mjs';
 
 export const externalFarm = env => !!env.FARM_BRIDGE_URL;
@@ -11,7 +11,7 @@ async function call(env,actor,input){
   catch{assert(false,'Não foi possível confirmar a operação da Farm. Atualize para conferir o estado antes de repetir.',503);}
   assert(response.status<300||response.status>=400,'A integração Farm retornou um endereço inesperado.',503);
   let result;try{result=await response.json();}catch{assert(false,'A integração Farm está indisponível.',503);}
-  assert(response.ok,result.error||'Não foi possível concluir a operação da Farm.',response.status);
+  if(!response.ok)throw Object.assign(new HttpError(response.status,result.error||'Não foi possível concluir a operação da Farm.'),{code:result.code,retryAt:result.retryAt});
   return result;
 }
 export async function attachFarm(env,actor,state){

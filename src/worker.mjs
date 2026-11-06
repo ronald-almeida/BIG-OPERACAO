@@ -11,6 +11,7 @@ const json=(data,status=200,headers={})=>Response.json(data,{status,headers:{'Ca
 function secure(response,panel=true){const r=new Response(response.body,response);for(const [k,v] of Object.entries({'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Strict-Transport-Security':'max-age=31536000'}))r.headers.set(k,v);if(panel){r.headers.set('X-Frame-Options','DENY');r.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");}return r;}
 function userView(state,actor,env,now){
   settle(state,now);const copy=structuredClone(state);delete copy.admin;
+  copy.farm.sites=copy.farm.sites.map(s=>({...s,ownerName:s.owner==='ADMIN'?'Administrador':state.people.find(p=>p.id===s.owner)?.name||'Funcionário'}));
   copy.people=copy.people.map(({passwordHash,credentialVersion,planHistory,...p})=>p);
   copy.profiles=copy.profiles.map(({vault,...p})=>({...p,hasPassword:!!vault}));
   copy.integrations={cloudflare:externalFarm(env)?state.farm.available===true:connected(env),vault:/^[a-f0-9]{64}$/i.test(env.VAULT_KEY||'')};
@@ -33,11 +34,9 @@ function userView(state,actor,env,now){
     }
   }
   if(!externalFarm(env))copy.farm.domains=copy.farm.domains.map(d=>({...d,site_count:state.farm.sites.filter(s=>s.domain_id===d.id).length,otherSites:state.farm.sites.some(s=>s.domain_id===d.id&&s.owner!==actor.id),rootOccupied:state.farm.sites.some(s=>s.domain_id===d.id&&s.publish_mode==='root'&&s.snapshot)}));
-  copy.farm.sites=copy.farm.sites.filter(s=>s.owner===actor.id);
-  copy.farm.history=copy.farm.history.filter(h=>h.owner===actor.id);
   return copy;
 }
-async function stateResponse(env,actor,extra={}){const {state}=await loadState(env.DB);actorCheck(state,actor);if(externalFarm(env)){try{await attachFarm(env,actor,state);}catch{state.farm={domains:[],sites:[],history:[],available:false,source:'cloudflare-d1',writable:false};}}const now=Date.now();return json({state:userView(state,actor,env,now),user:{id:actor.id,role:actor.role,name:actor.name},csrf:actor.session.csrf,now,...extra});}
+async function stateResponse(env,actor,extra={},includeFarm=true){const {state}=await loadState(env.DB);actorCheck(state,actor);if(externalFarm(env)){state.farm={domains:[],sites:[],history:[],available:false,source:'cloudflare-d1',writable:false,notRequested:!includeFarm};if(includeFarm){try{await attachFarm(env,actor,state);}catch(error){console.warn('farm_state_unavailable',error.code||'FARM_UNAVAILABLE');Object.assign(state.farm,{error:error.message,errorCode:error.code||'FARM_UNAVAILABLE',retryAt:error.retryAt||Date.now()+30000});}}}const now=Date.now();return json({state:userView(state,actor,env,now),user:{id:actor.id,role:actor.role,name:actor.name},csrf:actor.session.csrf,now,...extra});}
 async function api(request,env){
   const url=new URL(request.url),path=url.pathname,method=request.method,now=Date.now();
   assert(env.DB,'Banco de dados não configurado.',503);
@@ -63,7 +62,7 @@ async function api(request,env){
   }
   const actor=await identify(request,env.DB,state);assert(actor,'Entre na sua conta para continuar.',401);
   if(method!=='GET')assert(request.headers.get('x-csrf-token')===actor.session.csrf,'A sessão precisa ser atualizada.',403);
-  if(path==='/api/state'&&method==='GET')return stateResponse(env,actor);
+  if(path==='/api/state'&&method==='GET')return stateResponse(env,actor,{},url.searchParams.get('farm')!=='0');
   if(path==='/api/logout'&&method==='POST'){
     await mutate(env.DB,actor.id,crypto.randomUUID(),'logout',current=>{if(actor.role==='employee')pause(current,actor.id,'Saída do sistema',now);return {};});
     await env.DB.prepare('DELETE FROM auth_sessions WHERE token_hash=?').bind(actor.session.token_hash).run();return json({ok:true},200,{'Set-Cookie':cookie('',0,request)});
@@ -84,7 +83,7 @@ async function api(request,env){
     assert(typeof d.cmd==='string'&&d.cmd.length<80&&(!d.id||typeof d.id==='string'),'Comando inválido.');
     if(externalFarm(env)&&d.cmd.startsWith('farm-')){const result=await externalFarmCommand(env,actor,state,d,request.headers.get('x-request-id'));return stateResponse(env,actor,{result});}
     const result=await mutate(env.DB,actor.id,request.headers.get('x-request-id'),digest(JSON.stringify(d)),async current=>d.cmd.startsWith('farm-')?farmCommand(current,actor,d.cmd,d.id,d.data||{},env,now):command(current,actor,d.cmd,d.id,d.data||{},env,now));
-    return stateResponse(env,actor,{result});
+    return stateResponse(env,actor,{result},d.cmd.startsWith('farm-'));
   }
   if(path==='/api/farm-publish'&&method==='POST'){
     await throttle(env.DB,'publish:'+actor.id,20,60000);const d=await readBody(request);assert(['farm-publish','farm-unpublish','farm-verify'].includes(d.cmd),'Comando inválido.');

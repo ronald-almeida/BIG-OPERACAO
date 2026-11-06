@@ -9,7 +9,19 @@ A Farm é mantida no D1 big-cloack: sites, domínios, snapshots e histórico.
 O Neon continua responsável pelos usuários e demais módulos operacionais.
 O estado Farm é consultado e projetado na resposta; não é salvo como cópia editável no Neon.
 Entregas Farm são projetadas dos recibos D1, preservando o registro mesmo se a resposta se perder.
+Todos os funcionários podem consultar todos os sites e o histórico da Farm.
+Edição, publicação, retirada e exclusão continuam limitadas ao responsável ou administrador.
 Os sites antigos pertencem ao administrador até atribuição explícita pelo editor.
+
+Consultas da Farm são omitidas das atualizações operacionais fora da aba Farm.
+A lista é atualizada no máximo a cada 60 segundos em primeiro plano, além das ações manuais.
+O Worker compartilha leituras por 60 segundos, agrupa consultas simultâneas e invalida após comandos.
+Uma consulta interrompida pode manter a última lista por até 15 minutos, marcada como desatualizada
+e sem permitir alterações. Ao trocar de conta, a cópia da sessão anterior é descartada.
+O erro FARM_D1_READ_LIMIT informa a cota diária gratuita; tentativas automáticas usam intervalo de 5 minutos.
+O plano gratuito do D1 tem cota compartilhada pela conta. A renovação ocorre às 00h UTC (21h Bahia).
+As otimizações reduzem leituras, mas não liberam uma cota já esgotada nem garantem que toda a conta
+fique dentro do plano gratuito. O Worker público consulta hostname e subdomínio pelos índices existentes.
 
 O Worker big-cloack-api valida a credencial e as permissões por operação.
 Sua configuração FARM_BRIDGE_MODE controla read/write.

@@ -9,15 +9,23 @@ const choice=(v,values)=>{assert(values.includes(v),'Opção inválida.');return
 const date=(v,now,future=false)=>{assert(typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&new Date(v+'T12:00:00Z').toISOString().slice(0,10)===v&&(future||v<=dateAt(now)),'Data inválida.');return v;};
 export const ownerCheck=(record,actor)=>{assert(record,'Registro não encontrado.',404);assert(actor.role==='admin'||record.owner===actor.id,'Acesso não autorizado.',403);return record;};
 export const adminCheck=actor=>assert(actor.role==='admin','Apenas o administrador pode fazer isso.',403);
-export function actorCheck(state,actor){const p=actor.id==='ADMIN'?state.admin:state.people.find(p=>p.id===actor.id);assert(p&&p.accessEnabled!==false&&(!actor.session||p.credentialVersion===actor.session.credential_version),'Sua sessão expirou.',401);}
-const owner=(state,v,actor)=>{const own=actor.role==='admin'?v:actor.id;assert(state.people.some(p=>p.id===own),'Cadastre um funcionário responsável.');return own;};
+export function actorCheck(state,actor){const p=actor.id==='ADMIN'?state.admin:state.people.find(p=>p.id===actor.id);assert(p&&!p.removedAt&&p.accessEnabled!==false&&(!actor.session||p.credentialVersion===actor.session.credential_version),'Sua sessão expirou.',401);}
+const owner=(state,v,actor,previous)=>{const own=actor.role==='admin'?v:actor.id;assert(state.people.some(p=>p.id===own&&(!p.removedAt||own===previous)),'Selecione um funcionário da equipe.');return own;};
 export function event(state,actor,entity,type,text,now=Date.now()){
   state.events.unshift({id:id('EVT'),entity,type,text,who:actor.name,employee:actor.role==='employee'?actor.id:null,date:dateAt(now),time:new Date(now).toLocaleTimeString('pt-BR',{timeZone:'America/Bahia',hour:'2-digit',minute:'2-digit'}),at:now});
 }
 export function session(state,employee){return state.sessions[employee]??={status:'idle',total:0,start:null,due:null,pending:null,remaining:null,last:null,windowStart:null};}
 function interval(settings){const r=crypto.getRandomValues(new Uint32Array(1))[0]/4294967296;return (settings.mode==='fixed'?settings.fixed:settings.min+r*(settings.max-settings.min))*60000;}
 function closeWindow(state,s,employee,end,reason){const start=s.windowStart??s.start;if(start!==null&&end>start)state.journal.push({id:id('JRN'),employee,start,end,duration:end-start,reason});s.windowStart=end;}
-export function pause(state,employee,reason,at){const s=session(state,employee);if(!['active','pending'].includes(s.status))return;const end=s.status==='pending'?Math.min(at,s.pending):Math.min(at,s.due);s.lastSessionMs=Math.max(0,end-s.start);closeWindow(state,s,employee,end,reason);s.total+=s.lastSessionMs;s.remaining=reason==='Pausa manual'?Math.max(1000,s.due-end):null;s.start=null;s.due=null;s.pending=null;s.status='paused';}
+export function pause(state,employee,reason,at){
+  const s=session(state,employee);if(!['active','pending'].includes(s.status))return;
+  const end=s.status==='pending'?Math.min(at,s.pending):Math.min(at,s.due);
+  const segmentMs=Math.max(0,end-s.start);
+  s.accumulatedMs=(s.accumulatedMs||0)+segmentMs;s.lastSessionMs=s.accumulatedMs;
+  closeWindow(state,s,employee,end,reason);s.total+=segmentMs;
+  s.remaining=reason==='Pausa manual'?Math.max(1000,s.due-end):null;
+  s.start=null;s.due=null;s.pending=null;s.status='paused';
+}
 export function settle(state,now=Date.now()){
   for(const [employee,s] of Object.entries(state.sessions)){
     if(s.status==='active'&&now>=s.due){s.pending=s.due;s.status='pending';}
@@ -27,9 +35,13 @@ export function settle(state,now=Date.now()){
 export function timeCommand(state,actor,cmd,now){
   assert(actor.role==='employee','Jornada disponível na conta do funcionário.',403);
   settle(state,now);const s=session(state,actor.id);
-  if(cmd==='start'&&!['active','pending'].includes(s.status)){Object.assign(s,{status:'active',start:now,windowStart:now,due:now+(s.remaining||interval(state.settings)),pending:null,remaining:null,last:now});event(state,actor,actor.id,'Jornada','Sessão de trabalho iniciada',now);}
+  if(cmd==='start'&&!['active','pending'].includes(s.status)){
+    const resuming=s.status==='paused';
+    Object.assign(s,{status:'active',accumulatedMs:resuming?(s.accumulatedMs??s.lastSessionMs??0):0,start:now,windowStart:now,due:now+(resuming&&s.remaining||interval(state.settings)),pending:null,remaining:null,last:now});
+    event(state,actor,actor.id,'Jornada',resuming?'Sessão de trabalho retomada':'Sessão de trabalho iniciada',now);
+  }
   else if(cmd==='pause')pause(state,actor.id,'Pausa manual',now);
-  else if(cmd==='end'){pause(state,actor.id,'Encerramento',now);s.status='ended';event(state,actor,actor.id,'Jornada','Expediente encerrado',now);}
+  else if(cmd==='end'){pause(state,actor.id,'Encerramento',now);s.status='ended';s.remaining=null;event(state,actor,actor.id,'Jornada','Expediente encerrado',now);}
   else if(cmd==='confirm'){assert(s.status==='pending','Não há confirmação pendente.');closeWindow(state,s,actor.id,now,'Presença confirmada');Object.assign(s,{status:'active',pending:null,due:now+interval(state.settings),last:now});event(state,actor,actor.id,'Presença','Presença confirmada',now);}
 }
 export function attributedCost(state,bid){
@@ -48,7 +60,7 @@ export async function command(state,actor,cmd,entity,d,env,now=Date.now()){
   if(cmd==='settings'){adminCheck(actor);state.settings={mode:choice(d.mode,['fixed','variable']),fixed:num(d.fixed,1,240),min:num(d.min,1,240),max:num(d.max,1,240),grace:num(d.grace,1,10),stuck:num(d.stuck,1,180)};assert(state.settings.max>=state.settings.min,'Intervalo máximo menor que o mínimo.');event(state,actor,'Configurações','Configuração','Regras de jornada atualizadas',now);return {};}
   if(cmd==='person'){
     adminCheck(actor);const month=required(d.month,7);assert(/^20\d{2}-(0[1-9]|1[0-2])$/.test(month),'Mês inválido.');
-    let p=entity?state.people.find(x=>x.id===entity):null;if(entity)assert(p,'Funcionário não encontrado.',404);
+    let p=entity?state.people.find(x=>x.id===entity):null;if(entity)assert(p&&!p.removedAt,'Funcionário não encontrado na equipe.',404);
     const username=required(d.username,40).toLowerCase();assert(/^[a-z0-9._-]{3,40}$/.test(username),'Usuário inválido.');
     assert(![state.admin,...state.people].some(x=>x?.username===username&&x.id!==entity),'Usuário já cadastrado.',409);
     if(!p){p={id:id('EMP'),role:'Operador',payPlans:{}};state.people.push(p);}
@@ -60,12 +72,19 @@ export async function command(state,actor,cmd,entity,d,env,now=Date.now()){
     if(!p.accessEnabled){p.credentialVersion=crypto.randomUUID();pause(state,p.id,'Acesso desativado',now);}
     event(state,actor,p.id,'Equipe','Acesso e remuneração de '+month+' atualizados',now);return {id:p.id};
   }
+  if(cmd==='person-remove'||cmd==='person-restore'){
+    adminCheck(actor);const p=state.people.find(x=>x.id===entity);assert(p,'Funcionário não encontrado.',404);
+    if(cmd==='person-remove'){
+      if(!p.removedAt){pause(state,p.id,'Remoção da equipe',now);p.removedAt=now;p.accessEnabled=false;p.credentialVersion=crypto.randomUUID();event(state,actor,p.id,'Equipe','Funcionário removido da equipe: '+p.name,now);}
+    }else if(p.removedAt){delete p.removedAt;p.accessEnabled=false;p.credentialVersion=crypto.randomUUID();event(state,actor,p.id,'Equipe','Cadastro restaurado com acesso desativado: '+p.name,now);}
+    return {id:p.id};
+  }
   if(cmd==='profile'){
     let p=entity?ownerCheck(state.profiles.find(x=>x.id===entity),actor):null;
     const meta=required(d.meta,300);assert(!state.profiles.some(x=>x.meta===meta&&x.id!==entity),'Identificador do perfil já cadastrado.',409);
     const fresh=!p,previous=p?.status;if(!p){p={id:id('PRF')};state.profiles.push(p);}
     const proxy=txt(d.proxy||'',80);assert(!proxy||state.proxies.some(x=>x.id===proxy),'Proxy inválido.');
-    Object.assign(p,{name:required(d.name,80),meta,login:txt(d.login||'',200),email:txt(d.email||'',200),backup:txt(d.backup||'',200),owner:owner(state,d.owner,actor),status:choice(d.status,['Ativo','Em revisão','Desativado']),proxy,created:date(d.created,now),note:txt(d.note||'',2000)});
+    Object.assign(p,{name:required(d.name,80),meta,login:txt(d.login||'',200),email:txt(d.email||'',200),backup:txt(d.backup||'',200),owner:owner(state,d.owner,actor,p.owner),status:choice(d.status,['Ativo','Em revisão','Desativado']),proxy,created:date(d.created,now),note:txt(d.note||'',2000)});
     if(d.demoPassword){p.vault=await seal(d.demoPassword,p.id,env);event(state,actor,p.id,'Credencial','Senha do cadastro atualizada',now);}
     event(state,actor,p.id,fresh?'Perfil cadastrado':'Atualização',fresh?'Perfil cadastrado':'Cadastro do perfil atualizado',now);
     if(!fresh&&previous!==p.status)event(state,actor,p.id,p.status==='Ativo'?'Perfil ativado':'Situação',`Perfil: ${previous} → ${p.status}`,now);
@@ -81,8 +100,13 @@ export async function command(state,actor,cmd,entity,d,env,now=Date.now()){
     const profiles=[...new Set(d.profiles)];for(const pid of profiles)ownerCheck(state.profiles.find(p=>p.id===pid),actor);
     const fresh=!b,previous=b?{...b}:null;if(!b){b={id:id('BM'),registered:day,capacitySince:day};state.bms.push(b);}
     if(previous&&!isAdmin)profiles.push(...previous.profiles.filter(pid=>!state.profiles.some(p=>p.id===pid&&p.owner===actor.id)));
-    const assigned=owner(state,d.owner,actor);const capacity=choice(Number(d.capacity),[0,250,2000,10000,100000,-1]);
+    const assigned=owner(state,d.owner,actor,previous?.owner);const capacity=choice(Number(d.capacity),[0,250,2000,10000,100000,-1]);
+    const verificationStatus=d.verificationStatus===undefined?(previous?.verificationStatus??null):choice(d.verificationStatus,['Ativada','Desativada','Não verificada']);
+    const apiStatus=d.apiStatus===undefined?(previous?.apiStatus??null):choice(d.apiStatus,['Ativa','Em análise','Desativada']);
     Object.assign(b,{name:required(d.name,80),meta,status:choice(d.status,['Em preparação','Em análise','Ativa','Restrita','Desativada']),capacity,owner:assigned,purpose:choice(d.purpose,['Operação própria','Cliente','Revenda']),stock:previous?.stock==='Vendida'?'Vendida':choice(d.stock,['Disponível','Reservada']),created:fresh&&d.origin==='new'?day:date(d.created,now),profiles:[...new Set(profiles)],note:txt(d.note||'',1000)});
+    Object.assign(b,{verificationStatus,apiStatus});
+    if(previous&&previous.verificationStatus!==verificationStatus)event(state,actor,b.id,'Verificação da BM',`${previous.verificationStatus||'Não informado'} → ${verificationStatus||'Não informado'}`,now);
+    if(previous&&previous.apiStatus!==apiStatus)event(state,actor,b.id,'API',`${previous.apiStatus||'Não informado'} → ${apiStatus||'Não informado'}`,now);
     if(fresh)b.producer=d.origin==='new'?assigned:null;if(b.status==='Ativa')b.ready=true;
     if(previous&&previous.capacity!==capacity){b.capacitySince=day;event(state,actor,b.id,'Capacidade',`Faixa alterada de ${previous.capacity} para ${capacity===2000?'2K':capacity===10000?'10K':capacity===100000?'100K':capacity===-1?'Ilimitado':capacity}`,now);}
     if(previous&&previous.status!==b.status)event(state,actor,b.id,'Situação',`${previous.status} → ${b.status}`,now);

@@ -29,7 +29,7 @@ export async function externalFarmCommand(env,actor,state,input,requestId){
   const data={...input.data};
   if(input.cmd==='farm-site'){
     data.owner=actor.role==='admin'?(data.owner||'ADMIN'):actor.id;
-    assert(data.owner==='ADMIN'||state.people.some(p=>p.id===data.owner),'Responsável inválido.');
+    assert(data.owner==='ADMIN'||state.people.some(p=>p.id===data.owner&&!p.removedAt),'Selecione um responsável da equipe.');
     if(data.bm)ownerCheck(state.bms.find(b=>b.id===data.bm),actor);
   }
   return call(env,actor,{action:'command',cmd:input.cmd,id:input.id||null,data,replace:input.replace,requestId});

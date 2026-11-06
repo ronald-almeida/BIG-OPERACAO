@@ -91,6 +91,70 @@ test('170 hours: 160 normal, 10 extra, monthly edges and presence timeout',()=>{
  timeCommand(s,actor,'start',now+70*60000);timeCommand(s,actor,'end',now+100*60000);assert.equal(payroll(s,actor.id,'2026-11',b).hours,171.5);
  s.journal=[{employee:actor.id,start:a-3600000,end:a+3600000,duration:7200000}];s.sessions={};assert.equal(payroll(s,actor.id,'2026-11',b).hours,1);
 });
+test('pause and resume keep accumulated time, exclude breaks and reset only after ending',()=>{
+ const s=emptyState(),actor={id:'EMP-A',role:'employee',name:'A'},t=Date.parse('2026-11-06T12:00:00Z');
+ s.people=[{id:actor.id,payPlans:{'2026-11':{fixed:2000,hours:160,overtimeRate:20}}}];s.settings={mode:'fixed',fixed:60,grace:2};
+ timeCommand(s,actor,'start',t);timeCommand(s,actor,'pause',t+90000);
+ let clock=s.sessions[actor.id];assert.equal(clock.accumulatedMs,90000);assert.equal(clock.remaining,3510000);
+ // Reload persisted state before resuming. Client timestamps never contribute.
+ const reloaded=JSON.parse(JSON.stringify(s));timeCommand(reloaded,actor,'start',t+690000);clock=reloaded.sessions[actor.id];
+ assert.equal(clock.accumulatedMs,90000);assert.equal(clock.windowStart,t+690000);assert.equal(clock.due,t+4200000);
+ timeCommand(reloaded,actor,'start',t+700000);assert.equal(clock.start,t+690000);
+ timeCommand(reloaded,actor,'pause',t+720000);assert.equal(clock.accumulatedMs,120000);assert.equal(clock.total,120000);
+ timeCommand(reloaded,actor,'pause',t+730000);assert.equal(clock.accumulatedMs,120000);
+ assert.equal(reloaded.journal.reduce((sum,j)=>sum+j.duration,0),120000);
+ assert.equal(payroll(reloaded,actor.id,'2026-11',t+730000).hours,120000/3600000);
+ timeCommand(reloaded,actor,'end',t+740000);timeCommand(reloaded,actor,'start',t+750000);
+ assert.equal(clock.accumulatedMs,0);assert.equal(clock.due,t+750000+3600000);
+ settle(reloaded,clock.due+180000);assert.equal(clock.accumulatedMs,3600000);
+ timeCommand(reloaded,actor,'start',t+5000000);assert.equal(clock.accumulatedMs,3600000);
+ // A paused session saved by the previous release also resumes at its shown value.
+ reloaded.sessions[actor.id]={status:'paused',total:90000,lastSessionMs:90000,remaining:3510000};
+ timeCommand(reloaded,actor,'start',t);assert.equal(reloaded.sessions[actor.id].accumulatedMs,90000);
+});
+test('removing a teammate revokes sessions and login while retaining ledger and asset ownership',async()=>{
+ const f=await fixture(),a=await f.employee('removealice'),b=await f.employee('removebruno');
+ const profile={name:'Perfil histórico',meta:'meta-history',owner:a.id,status:'Ativo',created:'2026-11-01'};
+ const created=await f.run('profile',null,profile);assert.equal(created.status,200);
+ await f.run('start',null,{},a.auth);
+ await mutate(f.env.DB,'test',crypto.randomUUID(),'worked',s=>{const c=s.sessions[a.id];c.start=Date.now()-90000;c.windowStart=c.start;return {};});
+ assert.equal((await f.run('person-remove',a.id,{},b.auth)).status,403);
+ assert.equal((await f.run('person-remove','ADMIN')).status,404);
+ const removed=await f.run('person-remove',a.id);assert.equal(removed.status,200);
+ const p=removed.body.state.people.find(p=>p.id===a.id);assert(p.removedAt);assert.equal(p.accessEnabled,false);
+ assert.equal((await f.call('state',undefined,a.auth)).status,401);
+ assert.equal((await f.call('login',{username:'removealice',password:'Employee-test-123'})).status,401);
+ let stored=(await loadState(f.env.DB)).state;
+ const recorded=stored.journal.filter(j=>j.employee===a.id).reduce((sum,j)=>sum+j.duration,0);assert(recorded>=90000);
+ assert.equal(stored.sessions[a.id].status,'paused');assert.equal(stored.profiles[0].owner,a.id);assert(stored.people.find(p=>p.id===a.id).payPlans['2026-11']);
+ assert.equal((await f.run('person-remove',a.id)).status,200);
+ stored=(await loadState(f.env.DB)).state;assert.equal(stored.journal.filter(j=>j.employee===a.id).reduce((sum,j)=>sum+j.duration,0),recorded);
+ assert.equal((await f.run('person',a.id,{month:'2026-11',name:'Alice',username:'removealice',accessEnabled:'yes',fixed:2000,hours:160,overtimeRate:20})).status,404);
+ assert.equal((await f.run('profile',null,{...profile,meta:'new-for-removed'})).status,400);
+ // Existing resources can be inspected/edited by admin without erasing attribution.
+ assert.equal((await f.run('profile',created.body.result.id,profile)).status,200);
+ assert.equal((await f.run('person-restore',a.id,{},b.auth)).status,403);
+ const restored=await f.run('person-restore',a.id);assert.equal(restored.status,200);assert.equal(restored.body.state.people.find(p=>p.id===a.id).accessEnabled,false);
+ assert.equal((await f.call('state',undefined,a.auth)).status,401);
+});
+test('BM verification and API states persist independently and respect ownership',async()=>{
+ const f=await fixture(),a=await f.employee('bmalice'),b=await f.employee('bmbruno');
+ const p=await f.run('profile',null,{name:'Perfil',meta:'verification-profile',status:'Ativo',created:'2026-11-01'},a.auth);
+ const data={name:'BM',meta:'verification-bm',profiles:[p.body.result.id],status:'Ativa',capacity:250,purpose:'Revenda',stock:'Disponível',origin:'new',created:'2026-11-01'};
+ const created=await f.run('bm',null,data,a.auth);assert.equal(created.status,200);const id=created.body.result.id;
+ assert.equal(created.body.state.bms[0].verificationStatus,null);assert.equal(created.body.state.bms[0].apiStatus,null);
+ for(const [verificationStatus,apiStatus] of [['Ativada','Ativa'],['Desativada','Em análise'],['Não verificada','Desativada']]){
+   const r=await f.run('bm',id,{...data,verificationStatus,apiStatus},a.auth);assert.equal(r.status,200);
+   const persisted=(await f.call('state',undefined,a.auth)).body.state.bms[0];
+   assert.equal(persisted.verificationStatus,verificationStatus);assert.equal(persisted.apiStatus,apiStatus);assert.equal(persisted.status,'Ativa');
+ }
+ assert.equal((await f.run('bm',id,{...data,verificationStatus:'Ativada',apiStatus:'Ativa'},b.auth)).status,403);
+ assert.equal((await f.run('bm',id,{...data,verificationStatus:'invalida'},a.auth)).status,400);
+ assert.equal((await f.run('bm',id,{...data,apiStatus:'invalida'},a.auth)).status,400);
+ const legacy=await f.run('bm',id,data,a.auth);assert.equal(legacy.body.state.bms[0].verificationStatus,'Não verificada');assert.equal(legacy.body.state.bms[0].apiStatus,'Desativada');
+ const admin=(await f.call('state',undefined,f.admin)).body.state;
+ assert.equal(admin.bms[0].apiStatus,'Desativada');assert(admin.events.some(e=>e.entity===id&&e.type==='API'));assert(admin.events.some(e=>e.entity===id&&e.type==='Verificação da BM'));
+});
 test('employee state caps totals and omits overtime rates; server controls timestamps',async()=>{
  const f=await fixture(),a=await f.employee('alice'),[start]=monthBounds('2026-11');
  await mutate(f.env.DB,'test',crypto.randomUUID(),'ledger',s=>{s.journal.push({id:'J',employee:a.id,start,end:start+170*3600000,duration:170*3600000,reason:'Teste'});return {};});

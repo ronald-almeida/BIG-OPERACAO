@@ -44,7 +44,7 @@ export async function farmCommand(state,actor,cmd,entity,d,env,now=Date.now()){
     if(!old||old.domain_id!==domain.id)assert(eligible(domain),'Domínio inativo ou sem capacidade.');
     if(moved)assert(domain.active&&!old.snapshot,'Retire a publicação antes de mudar o endereço.');
     const hostname=farmHostname({subdomain,publish_mode:d.publish_mode},domain);assert(hostname!==new URL(env.APP_ORIGIN).hostname,'Endereço reservado para o painel.');
-    const assigned=actor.role==='admin'?d.owner:actor.id;assert(assigned==='ADMIN'||state.people.some(p=>p.id===assigned),'Responsável inválido.');
+    const assigned=actor.role==='admin'?d.owner:actor.id;assert(assigned==='ADMIN'||state.people.some(p=>p.id===assigned&&!p.removedAt),'Selecione um responsável da equipe.');
     if(d.bm)ownerCheck(state.bms.find(b=>b.id===d.bm),actor);
     const site={...old,id:old?.id??id('FST'),owner:assigned,bm:d.bm||'',domain_id:domain.id,data,theme:d.theme,head:txt(d.head||'',32000),publish_mode:d.publish_mode,subdomain,company:data.fantasia||data.razao,version:(old?.version||0)+1,created:old?.created||now,updated:now,status:old?.status||'draft',snapshot:old?.snapshot||null};
     if(old)Object.assign(old,site);else state.farm.sites.push(site);history(state,actor,site,old?'Edição':'Site criado','Rascunho salvo',now);return {id:site.id};

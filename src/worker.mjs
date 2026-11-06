@@ -56,7 +56,7 @@ async function api(request,env){
     await throttle(env.DB,'login-ip:'+request.headers.get('cf-connecting-ip'),30,900000);
     await throttle(env.DB,'login-user:'+username,10,900000);
     const user=[state.admin,...state.people].find(p=>p?.username===username);
-    const valid=await verifyPassword(d.password,user?.passwordHash);assert(valid&&user?.accessEnabled!==false,'Usuário ou senha inválidos.',401);
+    const valid=await verifyPassword(d.password,user?.passwordHash);assert(valid&&!user?.removedAt&&user?.accessEnabled!==false,'Usuário ou senha inválidos.',401);
     const raw=token(),csrf=token();await env.DB.prepare('INSERT INTO auth_sessions(token_hash,user_id,credential_version,expires,csrf) VALUES(?,?,?,?,?)').bind(digest(raw),user.id,user.credentialVersion,now+43200000,csrf).run();
     return json({ok:true},200,{'Set-Cookie':cookie(raw,43200,request)});
   }

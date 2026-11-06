@@ -67,6 +67,6 @@ export async function identify(request, db, state) {
   const session=await db.prepare('SELECT * FROM auth_sessions WHERE token_hash=? AND expires>?').bind(digest(raw),Date.now()).first();
   if(!session)return null;
   const account=[state.admin,...state.people].find(x=>x?.id===session.user_id);
-  if(!account || account.accessEnabled===false || session.credential_version!==account.credentialVersion)return null;
+  if(!account || account.removedAt || account.accessEnabled===false || session.credential_version!==account.credentialVersion)return null;
   return {id:account.id, role:account.id==='ADMIN'?'admin':'employee', name:account.name, session};
 }
